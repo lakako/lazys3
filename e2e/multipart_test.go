@@ -44,7 +44,7 @@ func TestE2E_MultipartLargeObject(t *testing.T) {
 	if err != nil {
 		t.Fatalf("UploadFileMultipart: %v", err)
 	}
-	if out == nil || out.Location == "" {
+	if out == nil || out.Location == nil || *out.Location == "" {
 		t.Errorf("UploadOutput = %+v, want non-empty Location", out)
 	}
 

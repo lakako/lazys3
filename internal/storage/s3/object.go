@@ -9,10 +9,11 @@ import (
 	"log"
 	"os"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/aws/aws-sdk-go-v2/aws"
-	"github.com/aws/aws-sdk-go-v2/feature/s3/manager"
+	"github.com/aws/aws-sdk-go-v2/feature/s3/transfermanager"
 	"github.com/aws/aws-sdk-go-v2/service/s3"
 	"github.com/aws/aws-sdk-go-v2/service/s3/types"
 	"github.com/aws/smithy-go"
@@ -59,13 +60,12 @@ func (s3store *S3Store) UploadLargeObject(ctx context.Context, bucketName string
 	}
 	largeBuffer := bytes.NewReader(largeObject)
 	var partMiBs int64 = 10
-	uploader := manager.NewUploader(s3store.client, func(u *manager.Uploader) {
-		u.PartSize = partMiBs * 1024 * 1024
-	})
-	_, err := uploader.Upload(ctx, &s3.PutObjectInput{
+	_, err := s3store.transfer.UploadObject(ctx, &transfermanager.UploadObjectInput{
 		Bucket: aws.String(bucketName),
 		Key:    aws.String(objectKey),
 		Body:   largeBuffer,
+	}, func(o *transfermanager.Options) {
+		o.PartSizeBytes = partMiBs * 1024 * 1024
 	})
 	if err != nil {
 		var apiErr smithy.APIError
@@ -119,13 +119,13 @@ func (s3store *S3Store) DownloadFile(ctx context.Context, bucketName string, obj
 
 func (s3store *S3Store) DownloadLargeObject(ctx context.Context, bucketName string, objectKey string) ([]byte, error) {
 	var partMiBs int64 = 10
-	downloader := manager.NewDownloader(s3store.client, func(d *manager.Downloader) {
-		d.PartSize = partMiBs * 1024 * 1024
-	})
-	buffer := manager.NewWriteAtBuffer([]byte{})
-	_, err := downloader.Download(ctx, buffer, &s3.GetObjectInput{
-		Bucket: aws.String(bucketName),
-		Key:    aws.String(objectKey),
+	buffer := &writeAtBuffer{}
+	_, err := s3store.transfer.DownloadObject(ctx, &transfermanager.DownloadObjectInput{
+		Bucket:   aws.String(bucketName),
+		Key:      aws.String(objectKey),
+		WriterAt: buffer,
+	}, func(o *transfermanager.Options) {
+		o.PartSizeBytes = partMiBs * 1024 * 1024
 	})
 	if err != nil {
 		log.Printf("Couldn't download large object from %v:%v. Here's why: %v\n",
@@ -486,11 +486,11 @@ func (s3store *S3Store) PutObject(ctx context.Context, r io.Reader, bucketName s
 	return output, nil
 }
 
-func (s3store *S3Store) UploadObject(ctx context.Context, reader io.Reader, bucketName string, key string) (*manager.UploadOutput, error) {
+func (s3store *S3Store) UploadObject(ctx context.Context, reader io.Reader, bucketName string, key string) (*transfermanager.UploadObjectOutput, error) {
 	if s3store.dryRun {
-		return &manager.UploadOutput{}, nil
+		return &transfermanager.UploadObjectOutput{}, nil
 	}
-	return s3store.uploader.Upload(ctx, &s3.PutObjectInput{
+	return s3store.transfer.UploadObject(ctx, &transfermanager.UploadObjectInput{
 		Bucket: aws.String(bucketName),
 		Key:    aws.String(key),
 		Body:   reader,
@@ -499,21 +499,44 @@ func (s3store *S3Store) UploadObject(ctx context.Context, reader io.Reader, buck
 }
 
 // UploadObjectWithPartSize is UploadObject with an explicit multipart
-// part size. partSize <= 0 keeps the manager default (5 MiB).
-func (s3store *S3Store) UploadObjectWithPartSize(ctx context.Context, reader io.Reader, bucketName string, key string, partSize int64) (*manager.UploadOutput, error) {
+// part size. partSize <= 0 keeps the transfermanager default (5 MiB).
+func (s3store *S3Store) UploadObjectWithPartSize(ctx context.Context, reader io.Reader, bucketName string, key string, partSize int64) (*transfermanager.UploadObjectOutput, error) {
 	if s3store.dryRun {
-		return &manager.UploadOutput{}, nil
+		return &transfermanager.UploadObjectOutput{}, nil
 	}
-	return s3store.uploader.Upload(ctx, &s3.PutObjectInput{
+	return s3store.transfer.UploadObject(ctx, &transfermanager.UploadObjectInput{
 		Bucket: aws.String(bucketName),
 		Key:    aws.String(key),
 		Body:   reader,
-	}, func(u *manager.Uploader) {
+	}, func(o *transfermanager.Options) {
 		if partSize > 0 {
-			u.PartSize = partSize
+			o.PartSizeBytes = partSize
 		}
 	})
 }
+
+// writeAtBuffer is an io.WriterAt over an in-memory byte slice. It is the
+// replacement for the deprecated s3manager.NewWriteAtBuffer, used as the
+// download destination for concurrent ranged GetObject parts.
+type writeAtBuffer struct {
+	mu  sync.Mutex
+	buf []byte
+}
+
+func (w *writeAtBuffer) WriteAt(p []byte, off int64) (int, error) {
+	w.mu.Lock()
+	defer w.mu.Unlock()
+	end := off + int64(len(p))
+	if end > int64(len(w.buf)) {
+		w.buf = append(w.buf, make([]byte, end-int64(len(w.buf)))...)
+	}
+	copy(w.buf[off:], p)
+	return len(p), nil
+}
+
+// Bytes returns a slice of the underlying buffer (valid until the next
+// WriteAt call).
+func (w *writeAtBuffer) Bytes() []byte { return w.buf }
 
 func (s3store *S3Store) HeadObject(ctx context.Context, bucketName string, objectKey string) (*s3.HeadObjectOutput, error) {
 	return s3store.client.HeadObject(ctx, &s3.HeadObjectInput{
