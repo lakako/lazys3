@@ -141,6 +141,24 @@ func NewLazyS3ModelWithConfig(cfg config.Config, awsFiles config.AWSFiles) Model
 	}
 }
 
+// autoEnterBucketMsg carries the s3_bucket read from the shared config's
+// [default] section at startup; an empty bucket means the key is absent
+// and the normal profile-picker flow applies.
+type autoEnterBucketMsg struct {
+	bucket      string
+	endpointURL string
+}
+
+// autoEnterBucketCmd reads the default profile's s3_bucket once at startup
+// (profilelist.DefaultProfileBucket never fails hard; it logs and yields an
+// empty bucket on unreadable files).
+func autoEnterBucketCmd(files config.AWSFiles) tea.Cmd {
+	return func() tea.Msg {
+		bucket, endpointURL := profilelist.DefaultProfileBucket(files)
+		return autoEnterBucketMsg{bucket: bucket, endpointURL: endpointURL}
+	}
+}
+
 // Init implements tea.Model.
 func (m Model) Init() tea.Cmd {
 	return tea.Batch(
@@ -150,6 +168,11 @@ func (m Model) Init() tea.Cmd {
 		// explicit query is a cheap second chance for the layout to learn
 		// the real size before the user starts pressing keys.
 		tea.RequestWindowSize,
+		// Startup auto-entry: when the shared config's [default] section
+		// carries an s3_bucket key, the returned msg skips the profile
+		// picker and bucket list and opens that bucket directly. An empty
+		// msg (no key configured) is ignored by Update.
+		autoEnterBucketCmd(m.awsFiles),
 		m.profileList.Init(),
 		m.bucketList.Init(),
 		m.objectlist.Init(),
@@ -620,6 +643,15 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			newBL, cmd := m.bucketList.Update(tmsg)
 			m.bucketList = newBL
 			cmds = append(cmds, cmd)
+		}
+	case autoEnterBucketMsg:
+		// Startup auto-entry from the shared config's [default] s3_bucket
+		// key: open that bucket with the default profile, skipping the
+		// profile picker and bucket list. The state guard keeps a fast
+		// user's navigation (the msg can arrive while the profile list is
+		// still loading) from being overridden.
+		if tmsg.bucket != "" && m.state == state.ActiveProfileList {
+			cmds = append(cmds, m.enterBucketDirectly(tmsg.bucket, tmsg.endpointURL))
 		}
 	case localFSDoneMsg:
 		// A local rename/mkdir finished: surface a failure, keep the

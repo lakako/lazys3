@@ -205,6 +205,20 @@ Notes:
 - `local.start_dir` accepts `~` and relative paths (resolved against the launch directory); it must be an existing directory or it is ignored.
 - `ui.transfer_panel_height` from older versions is deprecated and ignored — the bottom transfer panel was replaced by the full-screen transfers overlay (`t`). Old config files still load without error.
 
+### AWS shared config extension: `s3_bucket`
+
+lazys3 reads a `s3_bucket` key from the `[default]` section of the AWS shared config file (default `~/.aws/config`). When set, startup skips the profile picker and bucket list and opens that bucket directly:
+
+```ini
+[default]
+region = us-east-1
+# optional: point non-AWS services (MinIO, OSS, ...) at the right endpoint
+# endpoint_url = https://minio.example.com
+s3_bucket = my-bucket
+```
+
+Without the key, behavior is unchanged (the profile picker opens as before).
+
 ## License
 
 MIT — see [LICENSE](LICENSE).

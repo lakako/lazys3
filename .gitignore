@@ -32,4 +32,5 @@ go.work.sum
 # .vscode/
 
 lazys3 
+lazys3-static
 debug.log

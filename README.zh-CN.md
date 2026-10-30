@@ -205,6 +205,20 @@ local:
 - `local.start_dir` 支持 `~` 和相对路径（相对启动目录解析）；必须是已存在的目录，否则会被忽略。
 - 旧版本的 `ui.transfer_panel_height` 已废弃且被忽略 —— 底部传输面板已被全屏传输浮层（`t`）取代。旧配置文件仍可正常加载。
 
+### AWS 共享配置扩展：`s3_bucket`
+
+lazys3 支持在 AWS 共享 config 文件（默认 `~/.aws/config`）的 `[default]` 节中配置 `s3_bucket`。设置后启动时会跳过 profile 选择页和 bucket 列表，直接进入该 bucket：
+
+```ini
+[default]
+region = cn-north-1
+# 可选：非 AWS 服务（MinIO、OSS 等）在此指定 endpoint
+# endpoint_url = https://minio.example.com
+s3_bucket = my-bucket
+```
+
+未设置该键时行为不变（仍然先进入 profile 选择页）。
+
 ## 许可证
 
 MIT —— 见 [LICENSE](LICENSE)。

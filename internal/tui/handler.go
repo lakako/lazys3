@@ -16,6 +16,7 @@ import (
 	s3store "github.com/LinPr/lazys3/internal/storage/s3"
 	"github.com/LinPr/lazys3/internal/tui/components/bucketlist"
 	"github.com/LinPr/lazys3/internal/tui/components/objectlist"
+	"github.com/LinPr/lazys3/internal/tui/components/profilelist"
 	"github.com/LinPr/lazys3/internal/tui/components/syncmodal"
 	"github.com/LinPr/lazys3/internal/tui/components/transferpanel"
 	"github.com/LinPr/lazys3/internal/tui/components/versionview"
@@ -1165,6 +1166,37 @@ func (m *Model) initComponentsSize(msg tea.WindowSizeMsg) {
 	m.versionView.SetSize(m.width, m.height)
 	m.contentView.SetSize(m.width, m.height)
 	m.metaView.SetSize(m.width, m.height)
+}
+
+// enterBucketDirectly opens the given bucket with the default profile,
+// mirroring handleBucketSelect without a bucket-list selection. It backs
+// the startup auto-entry from the shared config's [default] s3_bucket key
+// (autoEnterBucketMsg in tui.go): the user lands straight in the bucket's
+// object list, and backing out later still reaches the bucket list.
+func (m *Model) enterBucketDirectly(bucket, endpointURL string) tea.Cmd {
+	m.selectedProfile = profilelist.DefaultProfileName
+	m.selectedBucket = bucket
+	// Entering a bucket always lands at its root prefix.
+	m.selectedObject = ""
+	// Restore the cursor position from a previous visit to this bucket's
+	// root, if any (applied by the next non-empty SetObjects).
+	m.objectlist.RestorePosition(bucket, "")
+
+	s3uri := fmt.Sprintf("s3://%s", bucket)
+	// Path-style is forced for any non-Amazonaws endpoint because
+	// OSS/OBS/COS/MinIO require it (same rule as handleProfileSelect).
+	opt := objectlist.Option{
+		S3Uri:          s3uri,
+		Profile:        m.selectedProfile,
+		EndpointURL:    endpointURL,
+		PathStyle:      shouldUsePathStyle(endpointURL),
+		ConfigFile:     m.awsFiles.ConfigFile,
+		CredentialFile: m.awsFiles.CredentialsFile,
+	}
+
+	m.objectlist.SetTitle(s3uri)
+	m.state = state.ActiveObjectList
+	return m.objectlist.Fetch(opt)
 }
 
 func (m *Model) handleProfileSelect() tea.Cmd {

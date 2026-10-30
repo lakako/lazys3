@@ -3,7 +3,7 @@ PACKAGE := github.com/LinPr/lazys3/cmd
 
 GOFILES := $(shell fd --extension go)
 
-.PHONY: default build lint lint-fix test test-unit test-e2e test-e2e-real \
+.PHONY: default build build-static lint lint-fix test test-unit test-e2e test-e2e-real \
         fmt check-nerd-font fix-nerd-font docs-prepare docs-dev docs-build docs-preview
 
 default: build
@@ -11,6 +11,13 @@ default: build
 
 build:
 	go build -ldflags "-X $(PACKAGE).Version=$(VERSION)" .
+
+# Fully static binary (no libc): CGO off, trimmed paths, stripped symbols.
+# All dependencies are pure Go, so CGO_ENABLED=0 suffices.
+build-static:
+	CGO_ENABLED=0 go build -trimpath \
+		-ldflags "-s -w -X $(PACKAGE).Version=$(VERSION)" \
+		-o lazys3-static .
 
 lint:
 	GOEXPERIMENT= golangci-lint run --path-mode=abs --config=".golangci.yml" --timeout=5m
